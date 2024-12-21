@@ -1,0 +1,1252 @@
+Skip to Content
+Search for books, courses, events, and more
+Search for books, courses, events, and more
+Chapter 6: Concepts and Constraints
+The C++20 standard provides a series of significant improvements to template metaprogramming with concepts and constraints. A constraint is a modern way to define requirements on template parameters. A concept is a set of named constraints. Concepts provide several benefits to the traditional way of writing templates, mainly improved readability of code, better diagnostics, and reduced compilation times.
+
+In this chapter, we will address the following topics:
+
+Understanding the need for concepts
+Defining concepts
+Exploring requires expressions
+Composing constraints
+Learning about the ordering of templates with constraints
+Constraining non-template member functions
+Constraining class templates
+Constraining variable templates and template aliases
+Learning more ways to specify constraints
+Using concepts to constrain auto parameters
+Exploring the standard concepts library
+By the end of this chapter, you will have a good understanding of the C++20 concepts, and an overview of what concepts the standard library provides.
+
+We will start the chapter by discussing what led to the development of concepts and what their main benefits are.
+
+Understanding the need for concepts
+As briefly mentioned in the introduction to this chapter, there are some important benefits that concepts provide. Arguably, the most important ones are code readability and better error messages. Before we look at how to use concepts, let’s revisit an example we saw previously and see how it stands in relation to these two programming aspects:
+
+
+template <typename T>
+T add(T const a, T const b)
+{
+   return a + b;
+}
+This simple function template takes two arguments and returns their sum. In fact, it does not return the sum, but the result of applying the plus operator to the two arguments. A user-defined type can overload this operator and perform some particular operation. The term sum only makes sense when we discuss mathematical types, such as integral types, floating-point types, the std::complex type, matrix types, vector types, etc.
+
+For a string type, for instance, the plus operator can mean concatenation. And for most types, its overloading does not make sense at all. Therefore, just by looking at the declaration of the function, without inspecting its body, we cannot really say what this function may accept as input and what it does. We can call this function as follows:
+
+
+add(42, 1);       // [1]
+add(42.0, 1.0);   // [2]
+add("42"s, "1"s); // [3]
+add("42", "1");   // [4] error: cannot add two pointers
+The first three calls are all good; the first call adds two integers, the second adds two double values, and the third concatenates two std::string objects. However, the fourth call will produce a compiler error because const char * is substituted for the T type template parameter, and the plus operator is not overloaded for pointer types.
+
+The intention for this add function template is to allow passing only values of arithmetic types, that is, integer and floating-point types. Before C++20, we could do this in several ways.
+
+One way is to use std::enable_if and SFINAE, as we saw in the previous chapter. Here is such an implementation:
+
+
+template <typename T,
+   typename = typename std::enable_if_t
+      <std::is_arithmetic_v<T>>>
+T add(T const a, T const b)
+{
+   return a + b;
+}
+The first thing to notice here is that the readability has decreased. The second type template parameter is difficult to read and requires good knowledge of templates to understand. However, this time, both the calls on the lines marked with [3] and [4] are producing a compiler error. Different compilers are issuing different error messages. Here are the ones for the three major compilers:
+
+In VC++ 17, the output is:
+error C2672: 'add': no matching overloaded function found
+
+error C2783: 'T add(const T,const T)': could not deduce template argument for '<unnamed-symbol>'
+
+In GCC 12, the output is:
+prog.cc: In function 'int main()':
+
+prog.cc:15:8: error: no matching function for call to 'add(std::__cxx11::basic_string<char>, std::__cxx11::basic_string<char>)'
+
+   15 |     add("42"s, "1"s);
+
+      |     ~~~^~~~~~~~~~~~~
+
+prog.cc:6:6: note: candidate: 'template<class T, class> T add(T, T)'
+
+    6 |    T add(T const a, T const b)
+
+      |      ^~~
+
+prog.cc:6:6: note:   template argument deduction/substitution failed:
+
+In file included from /opt/wandbox/gcc-head/include/c++/12.0.0/bits/move.h:57,
+
+                 from /opt/wandbox/gcc-head/include/c++/12.0.0/bits/nested_exception.h:40,
+
+                 from /opt/wandbox/gcc-head/include/c++/12.0.0/exception:154,
+
+                 from /opt/wandbox/gcc-head/include/c++/12.0.0/ios:39,
+
+                 from /opt/wandbox/gcc-head/include/c++/12.0.0/ostream:38,
+
+                 from /opt/wandbox/gcc-head/include/c++/12.0.0/iostream:39,
+
+                 from prog.cc:1:
+
+/opt/wandbox/gcc-head/include/c++/12.0.0/type_traits: In substitution of 'template<bool _Cond, class _Tp> using enable_if_t = typename std::enable_if::type [with bool _Cond = false; _Tp = void]':
+
+prog.cc:5:14:   required from here
+
+/opt/wandbox/gcc-head/include/c++/12.0.0/type_traits:2603:11: error: no type named 'type' in 'struct std::enable_if<false, void>'
+
+2603 |     using enable_if_t = typename enable_if<_Cond, _Tp>::type;
+
+      |           ^~~~~~~~~~~
+
+In Clang 13, the output is:
+prog.cc:15:5: error: no matching function for call to 'add'
+
+    add("42"s, "1"s);
+
+    ^~~
+
+prog.cc:6:6: note: candidate template ignored: requirement 'std::is_arithmetic_v<std::string>' was not satisfied [with T = std::string]
+
+   T add(T const a, T const b)
+
+     ^
+
+The error message in GCC is very verbose, and VC++ doesn’t say what the reason for failing to match the template argument is. Clang does, arguably, a better job at providing an understandable error message.
+
+Another way to define restrictions for this function, prior to C++20, is with the help of a static_assert statement, as shown in the following snippet:
+
+
+template <typename T>
+T add(T const a, T const b)
+{
+   static_assert(std::is_arithmetic_v<T>, 
+                 "Arithmetic type required");
+   return a + b;
+}
+With this implementation, however, we returned to the original problem that just by looking at the declaration of the function, we wouldn’t know what kind of parameters it would accept, provided that any restriction exists. The error messages, on the other hand, are as follows:
+
+In VC++ 17:
+error C2338: Arithmetic type required
+
+main.cpp(157): message : see reference to function template instantiation 'T add<std::string>(const T,const T)' being compiled
+
+     with
+
+     [
+
+         T=std::string
+
+     ]
+
+In GCC 12:
+prog.cc: In instantiation of 'T add(T, T) [with T = std::__cxx11::basic_string<char>]':
+
+prog.cc:15:8:   required from here
+
+prog.cc:7:24: error: static assertion failed: Arithmetic type required
+
+    7 |     static_assert(std::is_arithmetic_v<T>, "Arithmetic type required");
+
+      |                   ~~~~~^~~~~~~~~~~~~~~~~~
+
+prog.cc:7:24: note: 'std::is_arithmetic_v<std::__cxx11::basic_string<char> >' evaluates to false
+
+In Clang 13:
+prog.cc:7:5: error: static_assert failed due to requirement 'std::is_arithmetic_v<std::string>' "Arithmetic type required"
+
+    static_assert(std::is_arithmetic_v<T>, "Arithmetic type required");
+
+    ^             ~~~~~~~~~~~~~~~~~~~~~~~
+
+prog.cc:15:5: note: in instantiation of function template specialization 'add<std::string>' requested here
+
+    add("42"s, "1"s);
+
+    ^
+
+The use of the static_assert statement results in similar error messages received regardless of the compiler.
+
+We can improve these two discussed aspects (readability and error messages) in C++20 by using constraints. These are introduced with the new requires keyword as follows:
+
+
+template <typename T>
+requires std::is_arithmetic_v<T>
+T add(T const a, T const b)
+{
+   return a + b;
+}
+The requires keyword introduces a clause, called the requires clause, that defines the constraints on the template parameters. There are, actually, two alternative syntaxes: one when the requires clause follows the template parameter list, as seen previously, and one when the requires clause follows the function declaration, as shown in the next snippet:
+
+
+template <typename T>      
+T add(T const a, T const b)
+requires std::is_arithmetic_v<T>
+{
+   return a + b;
+}
+Choosing between these two syntaxes is a matter of personal preference. However, in both cases, the readability is much better than in the pre-C++20 implementations. You know just by reading the declaration that the T type template parameter must be of an arithmetic type. Also, this implies that the function is simply adding two numbers. You don’t really need to see the definition to know that. Let’s see how the error message changes when we call the function with invalid arguments:
+
+In VC++ 17:
+error C2672: 'add': no matching overloaded function found
+
+error C7602: 'add': the associated constraints are not satisfied
+
+In GCC 12:
+prog.cc: In function 'int main()':
+
+prog.cc:15:8: error: no matching function for call to 'add(std::__cxx11::basic_string<char>, std::__cxx11::basic_string<char>)'
+
+   15 |     add("42"s, "1"s);
+
+      |     ~~~^~~~~~~~~~~~~
+
+prog.cc:6:6: note: candidate: 'template<class T>  requires  is_arithmetic_v<T> T add(T, T)'
+
+    6 |    T add(T const a, T const b)
+
+      |      ^~~
+
+prog.cc:6:6: note:   template argument deduction/substitution failed:
+
+prog.cc:6:6: note: constraints not satisfied
+
+prog.cc: In substitution of 'template<class T>  requires  is_arithmetic_v<T> T add(T, T) [with T = std::__cxx11::basic_string<char>]':
+
+prog.cc:15:8:   required from here
+
+prog.cc:6:6:   required by the constraints of 'template<class T>  requires  is_arithmetic_v<T> T add(T, T)'
+
+prog.cc:5:15: note: the expression 'is_arithmetic_v<T> [with T = std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >]' evaluated to 'false'
+
+    5 | requires std::is_arithmetic_v<T>
+
+      |          ~~~~~^~~~~~~~~~~~~~~~~~
+
+In Clang 13:
+prog.cc:15:5: error: no matching function for call to 'add'
+
+    add("42"s, "1"s);
+
+    ^~~
+
+prog.cc:6:6: note: candidate template ignored: constraints not satisfied [with T = std::string]
+
+   T add(T const a, T const b)
+
+     ^
+
+prog.cc:5:10: note: because 'std::is_arithmetic_v<std::string>' evaluated to false
+
+requires std::is_arithmetic_v<T>
+
+         ^
+
+The error messages follow the same patterns seen already: GCC is too verbose, VC++ is missing essential information (the constraint that is not met), while Clang is more concise and better pinpoints the cause of the error. Overall, there is an improvement in the diagnostic messages, although there is still room for improvement.
+
+A constraint is a predicate that evaluates to true or false at compile-time. The expression used in the previous example, std::is_arithmetic_v<T>, is simply using a standard type trait (which we saw in the previous chapter). However, these are different kinds of expressions that can be used in a constraint, and we will learn about them later in this chapter.
+
+In the next section, we look at how to define and use named constraints.
+
+Defining concepts
+The constraints seen previously are nameless predicates defined in the places they are used. Many constraints are generic and can be used in multiple places. Let’s consider the following example of a function similar to the add function. This function performs the multiplication of arithmetic values and is shown next:
+
+
+template <typename T>
+requires std::is_arithmetic_v<T>
+T mul(T const a, T const b)
+{
+   return a * b;
+}
+The same requires clause seen with the add function is present here. To avoid this repetitive code, we can define a name constraint that can be reused in multiple places. A named constraint is called a concept. A concept is defined with the new concept keyword and template syntax. Here is an example:
+
+
+template<typename T>
+concept arithmetic = std::is_arithmetic_v<T>;
+Even though they are assigned a Boolean value, concept names should not contain verbs. They represent requirements and are used as attributes or qualifiers on template parameters. Therefore, you should prefer names such as arithmetic, copyable, serializable, container, and more, and not is_arithmetic, is_copyable, is_serializable, and is_container. The previously defined arithmetic concept can be used as follows:
+
+
+template <arithmetic T>
+T add(T const a, T const b) { return a + b; }
+template <arithmetic T>
+T mul(T const a, T const b) { return a * b; }
+You can see from this snippet that the concept is used instead of the typename keyword. It qualifies the T type with the arithmetic quality, meaning that only the types that satisfy this requirement can be used as template arguments. The same arithmetic concept can be defined with a different syntax, shown in the following snippet:
+
+
+template<typename T>
+concept arithmetic = requires { std::is_arithmetic_v<T>; };
+This uses a requires expression. A requires expression uses curly branches, {}, whereas a requires clause does not. A requires expression can contain a sequence of requirements of different kinds: simple requirements, type requirements, compound requirements, and nested requirements. The one seen here is a simple requirement. For the purpose of defining this particular concept, this syntax is more complicated but has the same final effect. However, in some cases, complex requirements are needed. Let’s look at an example.
+
+Consider the case when we want to define a template that should only take container types for an argument. Before concepts were available, this could have been solved with the help of a type trait and SFINAE or a static_assert statement, as we saw at the beginning of this chapter. However, a container type is not really easy to define formally. We can do it based on some properties of the standard containers:
+
+They have the member types value_type, size_type, allocator_type, iterator, and const_iterator.
+They have the member function size that returns the number of elements in the container.
+They have the member functions begin/end and cbegin/cend that return iterators and constant iterators to the first and one-past-the-last element in the container.
+With the knowledge accumulated from Chapter 5, Type Traits and Conditional Compilation, we can define an is_containter type trait as follows:
+
+
+template <typename T, typename U = void>
+struct is_container : std::false_type {};
+template <typename T>
+struct is_container<T,
+   std::void_t<typename T::value_type,
+               typename T::size_type,
+               typename T::allocator_type,
+               typename T::iterator,
+               typename T::const_iterator,
+               decltype(std::declval<T>().size()),
+               decltype(std::declval<T>().begin()),
+               decltype(std::declval<T>().end()),
+               decltype(std::declval<T>().cbegin()),
+               decltype(std::declval<T>().cend())>> 
+   : std::true_type{};
+template <typename T, typename U = void>
+constexpr bool is_container_v = is_container<T, U>::value;
+We can verify with the help of static_assert statements that the type trait correctly identifies container types. Here is an example:
+
+
+struct foo {};
+static_assert(!is_container_v<foo>);
+static_assert(is_container_v<std::vector<foo>>);
+Concepts make writing such a template constraint much easier. We can employ the concept syntax and requires expressions to define the following:
+
+
+template <typename T>
+concept container = requires(T t)
+{
+   typename T::value_type;
+   typename T::size_type;
+   typename T::allocator_type;
+   typename T::iterator;
+   typename T::const_iterator;
+   t.size();
+   t.begin();
+   t.end();
+   t.cbegin();
+   t.cend();
+};
+This definition is both shorter and more readable. It uses both simple requirements, such as t.size(), and type requirements, such as typename T::value_type. It can be used to constrain template parameters in the manner seen previously but can also be used with the static_assert statements (since constraints evaluate to a compile-time Boolean value):
+
+
+struct foo{};
+static_assert(!container<foo>);
+static_assert(container<std::vector<foo>>);
+template <container C>
+void process(C&& c) {}
+In the following section, we will explore in depth the various kinds of requirements that can be used in requires expressions.
+
+Exploring requires expressions
+A requires expression may be a complex expression, as seen earlier in the example with the container concept. The actual form of a requires expression is very similar to function syntax and is as follows:
+
+
+requires (parameter-list) { requirement-seq }
+The parameter-list is a comma-separated list of parameters. The only difference from a function declaration is that default values are not allowed. However, the parameters that are specified in this list do not have storage, linkage, or lifetime. The compiler does not allocate any memory for them; they are only used to define requirements. However, they do have a scope, and that is the closing curly brace of the requires expression.
+
+The requirements-seq is a sequence of requirements. Each such requirement must end with a semicolon, like any statement in C++. There are four types of requirements:
+
+Simple requirements
+Type requirements
+Compound requirements
+Nested requirements
+These requirements may refer to the following:
+
+Template parameters that are in scope
+Local parameters introduced in the parameter list of the requires expression
+Any other declaration that is visible from the enclosing context
+In the following subsections, we will explore all the mentioned types of requirements. In the beginning, we’ll look at the simple requirements.
+
+Simple requirements
+A simple requirement is an expression that is not evaluated but only checked for correctness. The expression must be valid for the requirement to be evaluated to the value true. The expression must not start with the requires keyword as that defines a nested requirement (which will be discussed later).
+
+We already saw examples of simple statements when we defined the arithmetic and container concepts earlier. Let’s see a few more:
+
+
+template<typename T>
+concept arithmetic = requires 
+{
+   std::is_arithmetic_v<T>; 
+};
+template <typename T>
+concept addable = requires(T a, T b) 
+{ 
+   a + b; 
+};
+template <typename T>
+concept logger = requires(T t)
+{
+   t.error("just");
+   t.warning("a");
+   t.info("demo");
+};
+The first concept, arithmetic, is the same one we defined earlier. The std::is_arithmetic_v<T> expression is a simple requirement. Notice that when the parameter list is empty it can be completely omitted, as seen in this case, where we only check that the T type template parameter is an arithmetic type.
+
+The addable and logger concepts both have a parameter list because we are checking operations on values of the T type. The expression a + b is a simple requirement, as the compiler just checks that the plus operator is overloaded for the T type. In the last example, we make sure that the T type has three member functions called error, warning, and info that take a single parameter of the const char* type or some type that can be constructed from const char*. Keep in mind that the actual values passed as arguments have no importance since these calls are never performed; they are only checked for correctness.
+
+Let’s elaborate briefly on the last example and consider the following snippet:
+
+
+template <logger T>
+void log_error(T& logger)
+{}
+struct console_logger
+{
+   void error(std::string_view text){}
+   void warning(std::string_view text) {}
+   void info(std::string_view text) {}
+};
+struct stream_logger
+{
+   void error(std::string_view text, bool = false) {}
+   void warning(std::string_view text, bool = false) {}
+   void info(std::string_view text, bool) {}
+};
+The log_error function template requires an argument of a type that meets the logger requirements. We have two classes, called console_logger and stream_logger. The first meets the logger requirements, but the second does not. That is because the info function cannot be invoked with a single argument of type const char*. This function also requires a second, Boolean, argument. The first two methods, error and warning, define a default value for the second argument, so they can be invoked with calls such as t.error("just") and warning("a").
+
+However, because of the third member function, stream_logger is not a log class that meets the expected requirements and, therefore, cannot be used with the log_error function. The use of console_logger and stream_logger is exemplified in the following snippet:
+
+
+console_logger cl;
+log_error(cl);      // OK
+stream_logger sl;
+log_error(sl);      // error
+In the next section, we look at the second category of requirements, type requirements.
+
+Type requirements
+Type requirements are introduced with the keyword typename followed by the name of a type. We have already seen several examples when we defined the container constraint. The name of the type must be valid for the requirement to be true. Type requirements can be used for several purposes:
+
+To verify that a nested type exists (such as in typename T::value_type;)
+To verify that a class template specialization names a type
+To verify that an alias template specialization names a type
+Let’s see several examples to learn how to use type requirements. In the first example, we check whether a type contains the inner types, key_type and value_type:
+
+
+template <typename T>
+concept KVP = requires 
+{
+   typename T::key_type;
+   typename T::value_type;
+};
+template <typename T, typename V>
+struct key_value_pair
+{
+   using key_type = T;
+   using value_type = V;
+   key_type    key;
+   value_type  value;
+};
+static_assert(KVP<key_value_pair<int, std::string>>);
+static_assert(!KVP<std::pair<int, std::string>>);
+The type, key_value_pair<int, std::string>, satisfies these type requirements, but std::pair<int, std::string> does not. The std::pair type does have inner types, but they are called first_type and second_type.
+
+In the second example, we check whether a class template specialization names a type. The class template is container, and the specialization is container<T>:
+
+
+template <typename T>
+requires std::is_arithmetic_v<T>
+struct container
+{ /* ... */ };
+template <typename T>
+concept containerizeable = requires {
+   typename container<T>;
+};
+static_assert(containerizeable<int>);
+static_assert(!containerizeable<std::string>);
+In this snippet, container is a class template that can only be specialized for arithmetic types, such as int, long, float, or double. Therefore, specializations such as container<int> exist, but container<std::string> does not. The containerizeable concept specifies a requirement for a type T to define a valid specialization of container. Therefore, containerizeable<int> is true, but containerizeable<std::string> is false.
+
+Now that we have understood simple requirements and type requirements it is time to explore the more complex category of requirements. The first to look at is compound requirements.
+
+Compound requirements
+Simple requirements allow us to verify that an expression is valid. However, sometimes we need to verify some properties of an expression not just that it is valid. This can include whether an expression does not throw exceptions or requirements on the result type (such as the return type of a function). The general form is the following:
+
+
+{ expression } noexcept -> type_constraint;
+Both the noexcept specification and the type_constraint (with the leading ->) are optional. The substitution process and the checking of the constraints occur as follows:
+
+The template arguments are substituted in the expression.
+If noexcept is specified, then the expression must not throw exceptions; otherwise, the requirement is false.
+If the type constraint is present, then the template arguments are also substituted into type_contraint and decltype((expression)) must satisfy the conditions imposed by type_constraint; otherwise, the requirement is false.
+We will discuss a couple of examples to learn how to use compound requirements. In the first example, we check whether a function is marked with the noexcept specifier:
+
+
+template <typename T>
+void f(T) noexcept {}
+template <typename T>
+void g(T) {}
+template <typename F, typename ... T>
+concept NonThrowing = requires(F && func, T ... t)
+{
+   {func(t...)} noexcept;
+};
+template <typename F, typename ... T>
+   requires NonThrowing<F, T...>
+void invoke(F&& func, T... t)
+{
+   func(t...);
+}
+In this snippet, there are two function templates: f is declared noexcept; therefore, it shall not throw any exception, and g, which potentially throws exceptions. The NonThrowing concept imposes the requirement that the variadic function of type F must not throw exceptions. Therefore, of the following two invocations, only the first is valid and the second will produce a compiler error:
+
+
+invoke(f<int>, 42);
+invoke(g<int>, 42); // error
+The error messages generated by Clang are shown in the following listing:
+
+prog.cc:28:7: error: no matching function for call to 'invoke'
+
+      invoke(g<int>, 42);
+
+      ^~~~~~
+
+prog.cc:18:9: note: candidate template ignored: constraints not satisfied [with F = void (&)(int), T = <int>]
+
+   void invoke(F&& func, T... t)
+
+        ^
+
+prog.cc:17:16: note: because 'NonThrowing<void (&)(int), int>' evaluated to false
+
+      requires NonThrowing<F, T...>
+
+               ^
+
+prog.cc:13:20: note: because 'func(t)' may throw an exception
+
+      {func(t...)} noexcept;
+
+                   ^
+
+These error messages tell us that the invoke(g<int>, 42) call is not valid because g<int> may throw an exception, which results in NonThrowing<F, T…> to evaluating as false.
+
+For the second example, we will define a concept that provides requirements for timer classes. Specifically, it requires that a function called start exists, that it can be invoked without any parameters, and that it returns void. It also requires that a second function called stop exists, that it can be invoked without any parameters, and that it returns a value that can be converted to long long. The concept is defined as follows:
+
+
+template <typename T>
+concept timer = requires(T t)
+{
+   {t.start()} -> std::same_as<void>;
+   {t.stop()}  -> std::convertible_to<long long>;
+};
+Notice that the type constraint cannot be any compile-time Boolean expression, but an actual type requirement. Therefore, we use other concepts for specifying the return type. Both std::same_as and std::convertible_to are concepts available in the standard library in the <concepts> header. We’ll learn more about these in the Exploring the standard concepts library section. Now, let’s consider the following classes that implement timers:
+
+
+struct timerA
+{
+   void start() {}
+   long long stop() { return 0; }
+};
+struct timerB
+{
+   void start() {}
+   int stop() { return 0; }
+};
+struct timerC
+{
+   void start() {}
+   void stop() {}
+   long long getTicks() { return 0; }
+};
+static_assert(timer<timerA>);
+static_assert(timer<timerB>);
+static_assert(!timer<timerC>);
+In this example, timerA satisfies the timer concept because it contains the two required methods: start that returns void and stop that returns long long. Similarly, timerB also satisfies the timer concept because it features the same methods, even though stop returns an int. However, the int type is implicitly convertible to the long long type; therefore, the type requirement is met. Lastly, timerC also has the same methods, but both of them return void, which means the type requirement for the return type of stop is not met, and therefore, the constraints imposed by the timer concept are not satisfied.
+
+The last category of requirements left to look into is nested requirements. We will do this next.
+
+Nested requirements
+The last category of requirements is nested requirements. A nested requirement is introduced with the requires keyword (remember we mentioned that a simple requirement is a requirement that is not introduced with the requires keyword) and has the following form:
+
+
+requires constraint-expression;
+The expression must be satisfied by the substituted arguments. The substitution of the template arguments into constraint-expression is done only to check whether the expression is satisfied or not.
+
+In the following example, we want to define a function that performs addition on a variable number of arguments. However, we want to impose some conditions:
+
+There is more than one argument.
+All the arguments have the same type.
+The expression arg1 + arg2 + … + argn is valid.
+To ensure this, we define a concept called HomogenousRange as follows:
+
+
+template<typename T, typename... Ts>
+inline constexpr bool are_same_v = 
+   std::conjunction_v<std::is_same<T, Ts>...>;
+template <typename ... T>
+concept HomogenousRange = requires(T... t)
+{
+   (... + t);
+   requires are_same_v<T...>;
+   requires sizeof...(T) > 1;
+};
+This concept contains one simple requirement and two nested requirements. One nested requirement uses the are_same_v variable template whose value is determined by the conjunction of one or more type traits (std::is_same), and the other, the compile-time Boolean expression size…(T) > 1.
+
+Using this concept, we can define the add variadic function template as follows:
+
+
+template <typename ... T>
+requires HomogenousRange<T...>
+auto add(T&&... t)
+{
+   return (... + t);
+}
+add(1, 2);   // OK
+add(1, 2.0); // error, types not the same
+add(1);      // error, size not greater than 1
+The first call exemplified previously is correct, as there are two arguments, and both are of type int. The second call produces an error because the types of the arguments are different (int and double). Similarly, the third call also produces an error because only one argument was supplied.
+
+The HomogenousRange concept can also be tested with the help of several static_assert statements, as shown next:
+
+
+static_assert(HomogenousRange<int, int>);
+static_assert(!HomogenousRange<int>);
+static_assert(!HomogenousRange<int, double>);
+We have walked through all the categories of the requires expressions that can be used for defining constraints. However, constraints can also be composed, and this is what we will discuss next.
+
+Composing constraints
+We have seen multiple examples of constraining template arguments but in all the cases so far, we used a single constraint. It is possible though for constraints to be composed using the && and || operators. A composition of two constraints using the && operator is called a conjunction and the composition of two constraints using the || operator is called a disjunction.
+
+For a conjunction to be true, both constraints must be true. Like in the case of logical AND operations, the two constraints are evaluated from left to right, and if the left constraint is false, the right constraint is not evaluated. Let’s look at an example:
+
+
+template <typename T>
+requires std::is_integral_v<T> && std::is_signed_v<T>
+T decrement(T value) 
+{
+   return value--;
+}
+In this snippet, we have a function template that returns the decremented value of the received argument. However, it only accepts signed integral values. This is specified with the conjunction of two constraints, std::is_integral_v<T> && std::is_signed_v<T>. The same result can be achieved using a different approach to defining the conjunction, as shown next:
+
+
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+template <typename T>
+concept Signed = std::is_signed_v<T>;
+template <typename T>
+concept SignedIntegral = Integral<T> && Signed<T>;
+template <SignedIngeral T>      
+T decrement(T value)
+{
+   return value--;
+}
+You can see three concepts defined here: one that constrains integral types, one that constrains signed types, and one that constrains integral and signed types.
+
+Disjunctions work in a similar way. For a disjunction to be true, at least one of the constraints must be true. If the left constraint is true, then the right one is not evaluated. Again, let’s see an example. If you recall the add function template from the first section of the chapter, we constrained it with the std::is_arithmetic type trait. However, we can get the same result using std::is_integral and std::is_floating_point, used as follows:
+
+
+template <typename T>
+requires std::is_integral_v<T> || std::is_floating_point_v<T>
+T add(T a, T b)
+{
+   return a + b;
+}
+The expression std::is_integral_v<T> || std::is_floating_point_v<T> defines a disjunction of two atomic constraints. We will look at this kind of constraint in more detail later. For the time being, keep in mind that an atomic constraint is an expression of the bool type that cannot be decomposed into smaller parts. Similarly, to what we’ve done previously, we can also build a disjunction of concepts and use that. Here is how:
+
+
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+template <typename T>
+concept FloatingPoint = std::is_floating_point_v<T>;
+template <typename T>
+concept Number = Integral<T> || FloatingPoint<T>;
+template <Number T>
+T add(T a, T b)
+{
+   return a + b;
+}
+As already mentioned, conjunctions and disjunctions are short-circuited. This has an important implication in checking the correctness of a program. Considering a conjunction of the form A<T> && B<T>, then A<T> is checked and evaluated first, and if it is false, the second constraint, B<T>, is not checked anymore.
+
+Similarly, for the A<T> || B<T> disjunction, after A<T> is checked, if it evaluates to true, the second constraint, B<T>, will not be checked. If you want both conjunctions to be checked for well-formedness and then their Boolean value determined, then you must use the && and || operators differently. A conjunction or disjunction is formed only when the && and || tokens, respectively, appear nested in parentheses or as an operand of the && or || tokens. Otherwise, these operators are treated as logical operators. Let’s explain this with examples:
+
+
+template <typename T>
+requires A<T> || B<T>
+void f() {}
+template <typename T>
+requires (A<T> || B<T>)
+void f() {}
+template <typename T>
+requires A<T> && (!A<T> || B<T>)
+void f() {}
+In all these examples, the || token defines a disjunction. However, when used inside a cast expression or a logical NOT, the && and || tokens define a logical expression:
+
+
+template <typename T>
+requires (!(A<T> || B<T>))
+void f() {}
+template <typename T>
+requires (static_cast<bool>(A<T> || B<T>))
+void f() {}
+In these cases, the entire expression is first checked for correctness, and then its Boolean value is determined. It is worth mentioning that in this latter example both expressions, !(A<T> || B<T>) and static_cast<bool>(A<T> || B<T>), need to be wrapped inside another set of parentheses because the expression of a requires clause cannot start with the ! token or a cast.
+
+Conjunctions and disjunctions cannot be used to constrain template parameter packs. However, there is a workaround to make it happen. Let’s consider a variadic implementation of the add function template with the requirement that all arguments must be integral types. One would attempt to write such a constraint in the following form:
+
+
+template <typename ... T>
+requires std::is_integral_v<T> && ...
+auto add(T ... args)
+{
+   return (args + ...);
+}
+This will generate a compiler error because the ellipsis is not allowed in this context. What we can do to avoid this error is to wrap the expression in a set of parentheses, as follows:
+
+
+template <typename ... T>
+requires (std::is_integral_v<T> && ...)
+auto add(T ... args)
+{
+   return (args + ...);
+}
+The expression, (std::is_integral_v<T> && ...), is now a fold expression. It is not a conjunction, as one would expect. Therefore, we get a single atomic constraint. The compiler will first check the correctness of the entire expression and then determine its Boolean value. To build a conjunction we first need to define a concept:
+
+
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+What we need to do next is change the requires clause so that it uses the newly defined concept and not the Boolean variable, std::is_integral_v<T>:
+
+
+template <typename ... T>
+requires (Integral<T> && ...)
+auto add(T ... args)
+{
+   return (args + ...);
+}
+It does not look like much of a change but, in fact, because of the use of concepts, validating the correctness and determining the Boolean value occur individually for each template argument. If the constraint is not met for a type, the rest is short-circuited, and the validation stops.
+
+You must have noticed that earlier in this section I used the term atomic constraint twice. Therefore, one would ask, what is an atomic constraint? It is an expression of the bool type that cannot be decomposed further. Atomic constraints are formed during the process of constraint normalization when the compiler decomposes constraints into conjunction and disjunctions of atomic constraints. This works as follows:
+
+The expression, E1 && E2, is decomposed into the conjunction of E1 and E2.
+The expression, E1 || E2, is decomposed into the disjunction of E1 and E2.
+The concept, C<A1, A2, … An>, is replaced with its definition after substituting all the template arguments into its atomic constraints.
+Atomic constraints are used for determining the partial ordering of constraints that, in turn, determine the partial ordering of function templates and class template specializations, as well as the next candidate for non-template functions in overload resolution. We will discuss this topic next.
+
+Learning about the ordering of templates with constraints
+When a compiler encounters function calls or class template instantiations, it needs to figure out what overload (for a function) or specialization (for a class) is the best match. A function may be overloaded with different type constraints. Class templates can also be specialized with different type constraints. In order to decide which is the best match, the compiler needs to figure out which one is the most constrained and, at the same time, evaluates to true after substituting all the template parameters. In order to figure this out, it performs the constraints normalization. This is the process of transforming the constraint expression into conjunctions and disjunctions of atomic constraints, as described at the end of the previous section.
+
+An atomic constraint A is said to subsume another atomic constraint B if A implies B. A constraint declaration D1 whose constraints subsume the constraints of another declaration D2 is said to be at least as constrained as D2. Moreover, if D1 is at least as constrained as D2 but the reciprocal is not true, then it’s said that D1 is more constrained than D2. More constrained overloads are selected as the best match.
+
+We will discuss several examples in order to understand how constraints affect overload resolution. First, let’s start with the following two overloads:
+
+
+int add(int a, int b) 
+{
+   return a + b; 
+}
+template <typename T>
+T add(T a, T b)
+{
+   return a + b;
+}
+The first overload is a non-template function that takes two int arguments and returns their sum. The second is the template implementation we have seen already in the chapter.
+
+Having these two, let’s consider the following calls:
+
+
+add(1.0, 2.0);  // [1]
+add(1, 2);      // [2]
+The first call (at line [1]) takes two double values so only the template overload is a match. Therefore, its instantiation for the double type will be called. The second invocation of the add function (at line [2]) takes two integer arguments. Both overloads are a possible match. The compiler will select the most specific one, which is the non-template overload.
+
+What if both overloads are templates but one of them is constrained? Here is an example to discuss:
+
+
+template <typename T>
+T add(T a, T b)
+{
+   return a + b;
+}
+template <typename T>
+requires std::is_integral_v<T>
+T add(T a, T b)
+{
+   return a + b;
+}
+The first overload is the function template seen previously. The second has an identical implementation except that it specifies a requirement for the template argument, which is restricted to integral types. If we consider the same two calls from the previous snippet, for the call at line [1] with two double values, only the first overload is a good match. For the call at line [2] with two integer values, both overloads are a good match. However, the second overload is more constrained (it has one constraint compared to the first one that has no constraint) so the compiler will select this one for the invocation.
+
+In the next example, both overloads are constrained. The first overload requires that the size of the template argument is four, and the second overload requires that the template argument must be an integral type:
+
+
+template <typename T>
+requires (sizeof(T) == 4)
+T add(T a, T b)
+{
+   return a + b;
+}
+template <typename T>
+requires std::is_integral_v<T>
+T add(T a, T b)
+{
+   return a + b;
+}
+Let’s consider the following calls to this overloaded function template:
+
+
+add((short)1, (short)2);  // [1]
+add(1, 2);                // [2]
+The call at line [1] uses arguments of the short type. This is an integral type with the size 2; therefore, only the second overload is a match. However, the call at line [2] uses arguments of the int type. This is an integral type of size 4. Therefore, both overloads are a good match. However, this is an ambiguous situation, and the compiler is not able to select between the two and it will trigger an error.
+
+What happens, though, if we change the two overloads slightly, as shown in the next snippet?
+
+
+template <typename T>
+requires std::is_integral_v<T>
+T add(T a, T b)
+{
+   return a + b;
+}
+template <typename T>
+requires std::is_integral_v<T> && (sizeof(T) == 4)
+T add(T a, T b)
+{
+   return a + b;
+}
+Both overloads require that the template argument must be an integral type, but the second also requires that the size of the integral type must be 4 bytes. So, for the second overload, we use a conjunction of two atomic constraints. We will discuss the same two calls, with short arguments and with int arguments.
+
+For the call at line [1], passing two short values, only the first overload is a good match, so this one will be invoked. For the call at line [2] that takes two int arguments, both overloads are a match. The second, however, is more constrained. Yet, the compiler is not able to decide which is a better match and will issue an ambiguous call error. This may be surprising to you because, in the beginning, I said that the most constrained overload will be selected from the overload set. It does not work in our example because we used type traits to constrain the two functions. The behavior is different if we instead use concepts. Here is how:
+
+
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+template <typename T>
+requires Integral<T>
+T add(T a, T b)
+{
+   return a + b;
+}
+template <typename T>
+requires Integral<T> && (sizeof(T) == 4)
+T add(T a, T b)
+{
+   return a + b;
+}
+There is no ambiguity anymore; the compiler will select the second overload as the best match from the overload set. This demonstrates that concepts are handled preferentially by the compiler. Remember, there are different ways to use constraints using concepts, but the preceding definition simply replaced a type trait with a concept; therefore, they are arguably a better choice for demonstrating this behavior than the next implementation:
+
+
+template <Integral T>
+T add(T a, T b)
+{
+   return a + b;
+}
+template <Integral T>
+requires (sizeof(T) == 4)
+T add(T a, T b)
+{
+   return a + b;
+}
+All the examples discussed in this chapter involved constraining function templates. However, it’s possible to constrain non-template member functions as well as class templates and class template specializations. We will discuss these in the next sections, and we will start with the former.
+
+Constraining non-template member functions
+Non-template functions that are members of class templates can be constrained in a similar way to what we have seen so far. This enables template classes to define member functions only for types that satisfy some requirements. In the following example, the equality operator is constrained:
+
+
+template <typename T>
+struct wrapper
+{
+   T value;
+   bool operator==(std::string_view str)
+   requires std::is_convertible_v<T, std::string_view>
+   {
+      return value == str;
+   }
+};
+The wrapper class holds a value of a T type and defines the operator== member only for types that are convertible to std::string_view. Let’s see how this can be used:
+
+
+wrapper<int>         a{ 42 };
+wrapper<char const*> b{ "42" };
+if(a == 42)   {} // error
+if(b == "42") {} // OK
+We have two instantiations of the wrapper class here, one for int and one for char const*. The attempt to compare the a object with the literal 42 generates a compiler error, because the operator== is not defined for this type. However, comparing the b object with the string literal "42" is possible because the equality operator is defined for types that can be implicitly converted to std::string_view, and char const* is such a type.
+
+Constraining non-template members is useful because it’s a cleaner solution than forcing members to be templates and using SFINAE. To understand this better let’s consider the following implementation of the wrapper class:
+
+
+template <typename T>
+struct wrapper
+{
+    T value;
+    wrapper(T const & v) :value(v) {}
+};
+This class template can be instantiated as follows:
+
+
+wrapper<int> a = 42;            //OK
+wrapper<std::unique_ptr<int>> p = 
+   std::make_unique<int>(42);   //error
+The first line compiles successfully, but the second generates a compiler error. There are different messages issued by different compilers, but at the core of the error is the call to the implicitly deleted copy constructor of std::unique_ptr.
+
+What we want to do is restrict the copy construction of wrapper from objects of the T type so that it only works for T types that are copy-constructible. The approach available before C++20 was to transform the copy constructor into a template and employ SFINAE. This would look as follows:
+
+
+template <typename T>
+struct wrapper
+{
+   T value;
+   template <typename U,
+             typename = std::enable_if_t<
+                   std::is_copy_constructible_v<U> &&
+                   std::is_convertible_v<U, T>>>
+   wrapper(U const& v) :value(v) {}
+};
+This time we also get an error when trying to initialize a wrapper<std::unique_ptr<int>> from an std::unique_ptr<int> value but the errors are different. For instance, here are the error messages generated by Clang:
+
+
+prog.cc:19:35: error: no viable conversion from 'typename __unique_if<int>::__unique_single' (aka 'unique_ptr<int>') to 'wrapper<std::unique_ptr<int>>'
+    wrapper<std::unique_ptr<int>> p = std::make_unique<int>(42); // error
+                                  ^   ~~~~~~~~~~~~~~~~~~~~~~~~~
+prog.cc:6:8: note: candidate constructor (the implicit copy constructor) not viable: no known conversion from 'typename __unique_if<int>::__unique_single' (aka 'unique_ptr<int>') to 'const wrapper<std::unique_ptr<int>> &' for 1st argument
+struct wrapper
+       ^
+prog.cc:6:8: note: candidate constructor (the implicit move constructor) not viable: no known conversion from 'typename __unique_if<int>::__unique_single' (aka 'unique_ptr<int>') to 'wrapper<std::unique_ptr<int>> &&' for 1st argument
+struct wrapper
+       ^
+prog.cc:13:9: note: candidate template ignored: requirement 'std::is_copy_constructible_v<std::unique_ptr<int, std::default_delete<int>>>' was not satisfied [with U = std::unique_ptr<int>]
+        wrapper(U const& v) :value(v) {}
+        ^
+The most important message to help understand the cause of the problem is the last one. It says that the requirement that U substituted with std::unique_ptr<int> does not satisfy the Boolean condition. In C++20, we can do a better job at implementing the same restriction on the T template argument. This time, we can use constraints and the copy constructor does not need to be a template anymore. The implementation in C++20 can look as follows:
+
+
+template <typename T>
+struct wrapper
+{
+   T value;
+   wrapper(T const& v) 
+      requires std::is_copy_constructible_v<T> 
+      :value(v)
+   {}
+};
+Not only there is less code that does not require complicated SFINAE machinery, but it is simpler and easier to understand. It also generates potentially better error messages. In the case of Clang, the last note listed earlier is replaced with the following:
+
+
+prog.cc:9:5: note: candidate constructor not viable: constraints not satisfied
+    wrapper(T const& v) 
+    ^
+prog.cc:10:18: note: because 'std::is_copy_constructible_v<std::unique_ptr<int> >' evaluated to false
+        requires std::is_copy_constructible_v<T>
+Before closing this section, it’s worth mentioning that not only non-template functions that are members of classes can be constrained but also free functions. The use cases for non-template functions are rare and can be achieved with alternative simple solutions such as constexpr if. Let’s look at an example, though:
+
+
+void handle(int v)
+{ /* do something */ }
+void handle(long v)
+    requires (sizeof(long) > sizeof(int))
+{ /* do something else */ }
+In this snippet, we have two overloads of the handle function. The first overload takes an int value and the second a long value. The body of these overloaded functions is not important but they should do different things, if and only if the size of long is different from the size of int. The standard specifies that the size of int is at least 16 bits, although on most platforms it is 32 bits. The size of long is at least 32 bits. However, there are platforms, such as LP64, where int is 32 bits and long is 64 bits. On these platforms, both overloads should be available. On all the other platforms, where the two types have the same size, only the first overload should be available. This can be defined in the form shown earlier, although the same can be achieved in C++17 with constexpr if as follows:
+
+
+void handle(long v)
+{
+   if constexpr (sizeof(long) > sizeof(int))
+   {
+      /* do something else */
+   }
+   else
+   {
+      /* do something */
+   }
+}
+In the next section, we’ll learn how to use constraints to define restrictions on template arguments of class templates.
+
+Constraining class templates
+Class templates and class template specializations can also be constrained just like function templates. To start, we’ll consider the wrapper class template again, but this time with the requirement that it should only work for template arguments of integral types. This can be simply specified in C++20 as follows:
+
+
+template <std::integral T>
+struct wrapper
+{
+   T value;
+};
+wrapper<int>    a{ 42 };    // OK
+wrapper<double> b{ 42.0 };  // error
+Instantiating the template for the int type is fine but does not work for double because this is not an integral type.
+
+Requirements that also be specified with requires clauses and class template specializations can also be constrained. To demonstrate this, let’s consider the scenario when we want to specialize the wrapper class template but only for types whose size is 4 bytes. This can be implemented as follows:
+
+
+template <std::integral T>
+struct wrapper
+{
+   T value;
+};
+template <std::integral T>
+requires (sizeof(T) == 4)
+struct wrapper<T>
+{
+   union
+   {
+      T value;
+      struct
+      {
+         uint8_t byte4;
+         uint8_t byte3;
+         uint8_t byte2;
+         uint8_t byte1;
+      };
+   };
+};
+We can use this class template as shown in the following snippet:
+
+
+wrapper<short> a{ 42 };
+std::cout << a.value << '\n';
+wrapper<int> b{ 0x11223344 };
+std::cout << std::hex << b.value << '\n';
+std::cout << std::hex << (int)b.byte1 << '\n';
+std::cout << std::hex << (int)b.byte2 << '\n';
+std::cout << std::hex << (int)b.byte3 << '\n';
+std::cout << std::hex << (int)b.byte4 << '\n';
+The object a is an instance of wrapper<short>; therefore, the primary template is used. On the other hand, the object b is an instance of wrapper<int>. Since int has a size of 4 bytes (on most platforms) the specialization is used and we can access the individual types of the wrapped value through the byte1, byte2, byte3, and byte4 members.
+
+Lastly on this topic, we will discuss how variable templates and template aliases can also be constrained.
+
+Constraining variable templates and template aliases
+As you well know, apart from function templates and class templates we also have variable templates and alias templates in C++. These make no exception of the need to define constraints. The same rules for constraining the template arguments discussed so far apply to these two. In this section, we will demonstrate them shortly. Let’s start with variable templates.
+
+It is a typical example to define the PI constant for showing how variable templates work. Indeed, it is a simple definition that looks as follows:
+
+
+template <typename T>
+constexpr T PI = T(3.1415926535897932385L);
+However, this only makes sense for floating-point types (and maybe other types such as decimal, which does not exist in C++ yet). Therefore, this definition should be restricted to floating-point types, as follows:
+
+
+template <std::floating_point T>
+constexpr T PI = T(3.1415926535897932385L);
+std::cout << PI<double> << '\n';  // OK
+std::cout << PI<int> << '\n';     // error
+The use of PI<double> is correct but PI<int> produces a compiler error. This is what constraints can provide in a simple and readable manner.
+
+Finally, the last category of templates that we have in the language, alias templates, can also be constrained. In the following snippet, we can see such an example:
+
+
+template <std::integral T>
+using integral_vector = std::vector<T>;
+The integral_vector template is an alias for std::vector<T> when T is an integral type. The very same can be achieved with the following alternative, although longer, declaration:
+
+
+template <typename T>
+requires std::integral<T>
+using integral_vector = std::vector<T>;
+We can use this integral_vector alias template as follows:
+
+
+integral_vector<int>    v1 { 1,2,3 };       // OK
+integral_vector<double> v2 {1.0, 2.0, 3.0}; // error
+Defining the v1 object works fine since int is an integral type. However, defining the v2 vector generates a compiler error because double is not an integral type.
+
+If you paid attention to the examples in this section, you will have noticed that they don’t use the type traits (and the associated variable templates) we used previously in the chapter, but a couple of concepts: std::integral and std::floating_point. These are defined in the <concepts> header and help us avoid repeatedly defining the same concepts based on available C++11 (or newer) type traits. We will look at the content of the standard concepts library shortly. Before we do that, let’s see what other ways we can employ to define constraints in C++20.
+
+Learning more ways to specify constraints
+We have discussed in this chapter about requires clauses and requires expressions. Although both are introduced with the new requires keyword, they are different things and should be fully understood:
+
+A requires clause determines whether a function participates in overload resolution or not. This happens based on the value of a compile-time Boolean expression.
+A requires expression determines whether a set of one or more expressions is well-formed, without having any side effects on the behavior of the program. A requires expression is a Boolean expression that can be used with a requires clause.
+Let’s see an example again:
+
+
+template <typename T>
+concept addable = requires(T a, T b) { a + b; };
+                       // [1] requires expression
+template <typename T>
+requires addable<T>    // [2] requires clause
+auto add(T a, T b)
+{
+   return a + b;
+}
+The construct at line [1] that starts with the requires keyword is a requires expression. It verifies that the expression, a + b, is well-formed for any T. On the other hand, the construct at line [2] is a requires clause. If the Boolean expression addable<T> evaluates to true, the function takes part in overload resolution; otherwise, it does not.
+
+Although requires clauses are supposed to use concepts, a requires expression can also be used. Basically, anything that can be placed on the right-hand side of the = token in a concept definition can be used with a requires clause. That means we can do the following:
+
+
+template <typename T>
+   requires requires(T a, T b) { a + b; }
+auto add(T a, T b)
+{
+   return a + b;
+}
+Although this is perfectly legal code it is arguable whether it’s a good way of using constraints. I would recommend avoiding creating constructs that start with requires requires. They are less readable and may create confusion. Moreover, named concepts can be used anywhere, while a requires clause with a requires expression will have to be duplicated if it needs to be used for multiple functions.
+
+Now that we’ve seen how to constrain template arguments in several ways using constraints and concepts, let’s see how we can simplify function template syntax and constrain the template arguments.
+
+Using concepts to constrain auto parameters
+In Chapter 2, Template Fundamentals, we discussed generic lambdas, introduced in C++14, as well as lambda templates, introduced in C++20. A lambda that uses the auto specifier for at least one parameter is called a generic lambda. The function object generated by the compiler will have a templated call operator. Here is an example to refresh your memory:
+
+
+auto lsum = [](auto a, auto b) {return a + b; };
+The C++20 standard generalizes this feature for all functions. You can use the auto specifier in the function parameter list. This has the effect of transforming the function into a template function. Here is an example:
+
+
+auto add(auto a, auto b)
+{
+   return a + b;
+}
+This is a function that takes two parameters and returns their sum (or to be more precise, the result of applying operator+ on the two values). Such a function using auto for function parameters is called an abbreviated function template. It is basically shorthand syntax for a function template. The equivalent template for the previous function is the following:
+
+
+template<typename T, typename U>
+auto add(T a, U b)
+{
+   return a + b;
+}
+We can call this function as we would call any template function, and the compiler will generate the proper instantiations by substituting the template arguments with the actual types. For instance, let’s consider the following calls:
+
+
+add(4, 2);   // returns 6
+add(4.0, 2); // returns 6.0
+We can use the cppinsights.io website to check the compiler-generated code for the add abbreviated function template based on these two calls. The following specializations are generated:
+
+
+template<>
+int add<int, int>(int a, int b)
+{
+  return a + b;
+}
+template<>
+double add<double, int>(double a, int b)
+{
+  return a + static_cast<double>(b);
+}
+Since an abbreviated function template is nothing but a regular function template with a simplified syntax, such a function can be explicitly specialized by the user. Here is an example:
+
+
+template<>
+auto add(char const* a, char const* b)
+{
+   return std::string(a) + std::string(b);
+}
+This is a full specialization for the char const* type. This specialization enables us to make calls such as add("4", "2"), although the result is a std::string value.
+
+This category of abbreviated function templates is called unconstrained. There is no restriction on the template arguments. However, it is possible to provide constraints for their parameters with concepts. Abbreviated function templates that use concepts are called constrained. Next, you can see an example of an add function constrained for integral types:
+
+
+auto add(std::integral auto a, std::integral auto b)
+{
+   return a + b;
+}
+If we consider again the same calls we saw earlier, the first would be successful, but the second would produce a compiler error because there is no overload that takes a double and an int value:
+
+
+add(4, 2);   // OK
+add(4.2, 0); // error
+Constrained auto can also be used for variadic abbreviated function templates. An example is shown in the following snippet:
+
+
+auto add(std::integral auto ... args)
+{
+   return (args + ...);
+}
+Last but not least, constrained auto can be used with generic lambdas too. If we would like the generic lambda shown at the beginning of this section to be used only with integral types, then we can constrain it as follows:
+
+
+auto lsum = [](std::integral auto a, std::integral auto b) 
+{
+   return a + b;
+};
+With the closing of this section, we have seen all the language features related to concepts and constraints in C++20. What is left to discuss is the set of concepts provided by the standard library, of which we have seen a couple already. We will do this next.
+
+Exploring the standard concepts library
+The standard library provides a set of fundamental concepts that can be used to define requirements on the template arguments of function templates, class templates, variable templates, and alias templates, as we have seen throughout this chapter. The standard concepts in C++20 are spread across several headers and namespaces. We will present some of them in this section although not all of them. You can find all of them online at https://en.cppreference.com/.
+
+The main set of concepts is available in the <concepts> header and the std namespace. Most of these concepts are equivalent to one or more existing type traits. For some of them, their implementation is well-defined; for some, it is unspecified. They are grouped into four categories: core language concepts, comparison concepts, object concepts, and callable concepts. This set of concepts contains the following (but not only):
+
+Table 6.1
+Table 6.1
+
+Table 6.1
+
+Some of these concepts are defined using type traits, some are a combination of other concepts or concepts and type traits, and some have, at least partially, an unspecified implementation. Here are some examples:
+
+
+template < class T >
+concept integral = std::is_integral_v<T>;
+template < class T >
+concept signed_integral = std::integral<T> && 
+                          std::is_signed_v<T>;
+template <class T>
+concept regular = std::semiregular<T> && 
+                  std::equality_comparable<T>;
+C++20 also introduces a new system of iterators, based on concepts, and defines a set of concepts in the <iterator> header. Some of these concepts are listed in the following table:
+
+Table 6.2
+Table 6.2
+Table 6.2
+
+Here is how the random_access_iterator concept is defined in the C++ standard:
+
+
+template<typename I>
+concept random_access_iterator =
+   std::bidirectional_iterator<I> &&
+   std::derived_from</*ITER_CONCEPT*/<I>,
+                     std::random_access_iterator_tag> &&
+   std::totally_ordered<I> &&
+   std::sized_sentinel_for<I, I> &&
+   requires(I i, 
+            const I j, 
+            const std::iter_difference_t<I> n)
+   {
+      { i += n } -> std::same_as<I&>;
+      { j +  n } -> std::same_as<I>;
+      { n +  j } -> std::same_as<I>;
+      { i -= n } -> std::same_as<I&>;
+      { j -  n } -> std::same_as<I>;
+      {  j[n]  } -> std::same_as<std::iter_reference_t<I>>;
+   };
+As you can see, it uses several concepts (some of them not listed here) as well as a requires expression to ensure that some expressions are well-formed.
+
+Also, in the <iterator> header, there is a set of concepts designed to simplify the constraining of general-purpose algorithms. Some of these concepts are listed in the next table:
+
+Table 6.3
+Table 6.3
+
+One of the several major features included in C++20 (along with concepts, modules, and coroutines) are ranges. The ranges library defines a series of classes and functions for simplifying operations with ranges. Among these is a set of concepts. These are defined in the <ranges> header and the std::ranges namespace. Some of these concepts are listed as follows:
+
+Table 6.4
+Table 6.4
+Table 6.4
+
+Here is how some of these concepts are defined:
+
+
+template< class T >
+concept range = requires( T& t ) {
+   ranges::begin(t);
+   ranges::end  (t);
+};
+template< class T >
+concept sized_range = ranges::range<T> &&
+   requires(T& t) {
+      ranges::size(t);
+   };
+template< class T >
+concept input_range = ranges::range<T> && 
+   std::input_iterator<ranges::iterator_t<T>>;
+As mentioned already, there are more concepts than those listed here. Others will probably be added in the future. This section is not intended as a complete reference to the standard concepts but rather as an introduction to them. You can learn more about each of these concepts from the official C++ reference documentation available at https://en.cppreference.com/. As for ranges, we will learn more about them and explore what the standard library provides in Chapter 8, Ranges and Algorithms.
+
+Summary
+The C++20 standard introduced some new major features to the language and the standard library. One of these is concepts, which was the topic of this chapter. A concept is a named constraint that can be used to define requirements on template arguments for function templates, class templates, variable templates, and alias templates.
+
+In this chapter, we have explored in detail how we can use constraints and concepts and how they work. We have learned about requires clauses (that determine whether a template participates in overload resolution) and requires expressions (that specify requirements for well-formedness of expressions). We have seen what various syntaxes are for specifying constraints. We also learned about abbreviated function templates that provide a simplified syntax for function templates. At the end of the chapter, we explored the fundamental concepts available in the standard library.
+
+In the next chapter, we will shift our attention toward applying the knowledge accumulated so far to implement various template-based patterns and idioms.
+
+Questions
+What are constraints and what are concepts?
+What are a requires clause and a requires expression?
+What are the categories of requires expressions?
+How do constraints affect the ordering of templates in overload resolution?
+What are abbreviated function templates?
+Further reading
+C++20 Concepts - A Quick Introduction, Bartlomiej Filipek, https://www.cppstories.com/2021/concepts-intro/
+How C++20 Concepts can simplify your code, Andreas Fertig, https://andreasfertig.blog/2020/07/how-cpp20-concepts-can-simplify-your-code/
+What are C++20 concepts and constraints? How to use them?, Sorush Khajepor, https://iamsorush.com/posts/concepts-cpp/
+Requires-clause, Andrzej Krzemieński, https://akrzemi1.wordpress.com/2020/03/26/requires-clause/
+Ordering by constraints, Andrzej Krzemieński, https://akrzemi1.wordpress.com/2020/05/07/ordering-by-constraints/
+
+table of contents
+search
+Settings
+Chapter 5: Type Traits and Conditional Compilation
+Chapter 6: Concepts and Constraints
+Add to playlist
+
+Template Metaprogramming with C++
+Part 3: Applied Templates

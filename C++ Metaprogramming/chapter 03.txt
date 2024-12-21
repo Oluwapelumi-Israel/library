@@ -1,0 +1,1147 @@
+Skip to Content
+Search for books, courses, events, and more
+Search for books, courses, events, and more
+Chapter 3: Variadic Templates
+A variadic template is a template with a variable number of arguments. This is a feature that was introduced in C++11. It combines generic code with functions with variable numbers of arguments, a feature that was inherited from the C language. Although the syntax and some details could be seen as cumbersome, variadic templates help us write function templates with a variable number of arguments or class templates with a variable number of data members in a way that was not possible before with compile time evaluation and type safety.
+
+In this chapter, we will learn about the following topics:
+
+Understanding the need for variadic templates
+Variadic function templates
+Parameter packs
+Variadic class templates
+Fold expressions
+Variadic alias templates
+Variadic variable templates
+By the end of the chapter, you will have a good understanding of how to write variadic templates and how they work.
+
+We will start, however, by trying to understand why templates with variable numbers of arguments are helpful.
+
+Understanding the need for variadic templates
+One of the most famous C and C++ functions is printf, which writes formatted output to the stdout standard output stream. There is actually a family of functions in the I/O library for writing formatted output, which also includes fprintf (which writes to a file stream), sprint, and snprintf (which write to a character buffer). These functions are similar because they take a string defining the output format and a variable number of arguments. The language, however, provides us with the means to write our own functions with variable numbers of arguments. Here is an example of a function that takes one or more arguments and returns the minimum value:
+
+
+#include<stdarg.h>
+int min(int count, ...)
+{
+   va_list args;
+   va_start(args, count);
+   int val = va_arg(args, int);
+   for (int i = 1; i < count; i++)
+   {
+      int n = va_arg(args, int);
+      if (n < val)
+         val = n;
+   }
+   va_end(args);
+   return val;
+}
+int main()
+{
+   std::cout << "min(42, 7)=" << min(2, 42, 7) << '\n';
+   std::cout << "min(1,5,3,-4,9)=" << 
+                 min(5, 1, 5, 3, -4, 
+              9) << '\n';
+}
+This implementation is specific for values of the int type. However, it is possible to write a similar function that is a function template. The transformation requires minimal changes and the result is as follows:
+
+
+template <typename T>
+T min(int count, ...)
+{
+   va_list args;
+   va_start(args, count);
+   T val = va_arg(args, T);
+   for (int i = 1; i < count; i++)
+   {
+      T n = va_arg(args, T);
+      if (n < val)
+         val = n;
+   }
+   va_end(args);
+   return val;
+}
+int main()
+{
+   std::cout << "min(42.0, 7.5)="
+             << min<double>(2, 42.0, 7.5) << '\n';
+   std::cout << "min(1,5,3,-4,9)=" 
+             << min<int>(5, 1, 5, 3, -4, 9) << '\n';
+}
+Writing code like this, whether generic or not, has several important drawbacks:
+
+It requires the use of several macros: va_list (which provides access to the information needed by the others), va_start (starts the iterating of the arguments), va_arg (provides access to the next argument), and va_end (stops the iterating of the arguments).
+Evaluation happens at runtime, even though the number and the type of the arguments passed to the function are known at compile-time.
+Variadic functions implemented in this manner are not type-safe. The va_ macros perform low-memory manipulation and type-casts are done in va_arg at runtime. These could lead to runtime exceptions.
+These variadic functions require specifying in some way the number of variable arguments. In the implementation of the earlier min function, there is a first parameter that indicates the number of arguments. The printf-like functions take a formatting string from which the number of expected arguments is determined. The printf function, for example, evaluates and then ignores additional arguments (if more are supplied than the number specified in the formatting string) but has undefined behavior if fewer arguments are supplied.
+In addition to all these things, only functions could be variadic, prior to C++11. However, there are classes that could also benefit from being able to have a variable number of data members. Typical examples are the tuple class, which represents a fixed-size collection of heterogeneous values, and variant, which is a type-safe union.
+
+Variadic templates help address all these issues. They are evaluated at compile-time, are type-safe, do not require macros, do not require explicitly specifying the number of arguments, and we can write both variadic function templates and variadic class templates. Moreover, we also have variadic variable templates and variadic alias templates.
+
+In the next section, we will start looking into variadic function templates.
+
+Variadic function templates
+Variadic function templates are template functions with a variable number of arguments. They borrow the use of the ellipsis (...) for specifying a pack of arguments, which can have different syntax depending on its nature.
+
+To understand the fundamentals for variadic function templates, let's start with an example that rewrites the previous min function:
+
+
+template <typename T>
+T min(T a, T b)
+{
+   return a < b ? a : b;
+}
+template <typename T, typename... Args>
+T min(T a, Args... args)
+{
+   return min(a, min(args...));
+}
+int main()
+{
+   std::cout << "min(42.0, 7.5)=" << min(42.0, 7.5) 
+             << '\n';
+   std::cout << "min(1,5,3,-4,9)=" << min(1, 5, 3, -4, 9)
+             << '\n';
+}
+What we have here are two overloads for the min function. The first is a function template with two parameters that returns the smallest of the two arguments. The second is a function template with a variable number of arguments that recursively calls itself with an expansion of the parameters pack. Although variadic function template implementations look like using some sort of compile-time recursion mechanism (in this case the overload with two parameters acting as the end case), in fact, they're only relying on overloaded functions, instantiated from the template and the set of provided arguments.
+
+The ellipsis (...) is used in three different places, with different meanings, in the implementation of a variadic function template, as can be seen in our example:
+
+To specify a pack of parameters in the template parameters list, as in typename... Args. This is called a template parameter pack. Template parameter packs can be defined for type templates, non-type templates, and template template parameters.
+To specify a pack of parameters in the function parameters list, as in Args... args. This is called a function parameter pack.
+To expand a pack in the body of a function, as in args…, seen in the call min(args…). This is called a parameter pack expansion. The result of such an expansion is a comma-separated list of zero or more values (or expressions). This topic will be covered in more detail in the next section.
+From the call min(1, 5, 3, -4, 9), the compiler is instantiating a set of overloaded functions with 5, 4, 3, and 2 arguments. Conceptually, it is the same as having the following set of overloaded functions:
+
+
+int min(int a, int b)
+{
+   return a < b ? a : b;
+}
+int min(int a, int b, int c)
+{
+   return min(a, min(b, c));
+}
+int min(int a, int b, int c, int d)
+{
+   return min(a, min(b, min(c, d)));
+}
+int min(int a, int b, int c, int d, int e)
+{
+   return min(a, min(b, min(c, min(d, e))));
+}
+As a result, min(1, 5, 3, -4, 9) expands to min(1, min(5, min(3, min(-4, 9)))). This can raise questions about the performance of variadic templates. In practice, however, the compilers perform a lot of optimizations, such as inlining as much as possible. The result is that, in practice, when optimizations are enabled, there will be no actual function calls. You can use online resources, such as Compiler Explorer (https://godbolt.org/), to see the code generated by different compilers with different options (such as optimization settings). For instance, let's consider the following snippet (where min is the variadic function template with the implementation shown earlier):
+
+
+int main()
+{    
+   std::cout << min(1, 5, 3, -4, 9);
+}
+Compiling this with GCC 11.2 with the -O flag for optimizations produces the following assembly code:
+
+
+sub     rsp, 8
+mov     esi, -4
+mov     edi, OFFSET FLAT:_ZSt4cout
+call    std::basic_ostream<char, std::char_traits<char>>
+           ::operator<<(int)
+mov     eax, 0
+add     rsp, 8
+ret
+You don't need to be an expert in assembly to understand what's happening here. The evaluation of the call to min(1, 5, 3, -4, 9) is done at compile-time and the result, -4, is loaded directly into the ESI register. There are no runtime calls, in this particular case, or computation, since everything is known at compile-time. Of course, that is not necessarily always the case.
+
+The following snippet shows an invocation on the min function template that cannot be evaluated at compile-time because its arguments are only known at runtime:
+
+
+int main()
+{    
+    int a, b, c, d, e;
+    std::cin >> a >> b >> c >> d >> e;
+    std::cout << min(a, b, c, d, e);
+}
+This time, the assembly code generated is the following (only showing here the code for the call to the min function):
+
+
+mov     esi, DWORD PTR [rsp+12]
+mov     eax, DWORD PTR [rsp+16]
+cmp     esi, eax
+cmovg   esi, eax
+mov     eax, DWORD PTR [rsp+20]
+cmp     esi, eax
+cmovg   esi, eax
+mov     eax, DWORD PTR [rsp+24]
+cmp     esi, eax
+cmovg   esi, eax
+mov     eax, DWORD PTR [rsp+28]
+cmp     esi, eax
+cmovg   esi, eax
+mov     edi, OFFSET FLAT:_ZSt4cout
+call    std::basic_ostream<char, std::char_traits<char>> 
+             ::operator<<(int)
+We can see from this listing that the compiler has inlined all the calls to the min overloads. There is only a series of instructions for loading values into registers, comparisons of register values, and jumps based on the comparison result, but there are no function calls.
+
+When optimizations are disabled, function calls do occur. We can trace these calls that occur during the invocation of the min function by using compiler-specific macros. GCC and Clang provide a macro called __PRETTY_FUNCTION__ that contains the signature of a function and its name. Similarly, Visual C++ provides a macro, called __FUNCSIG__, that does the same. These could be used within the body of a function to print its name and signature. We can use them as follows:
+
+
+template <typename T>
+T min(T a, T b)
+{
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
+   std::cout << __PRETTY_FUNCTION__ << "\n";
+#elif defined(_MSC_VER)
+   std::cout << __FUNCSIG__ << "\n";
+#endif
+   return a < b ? a : b;
+}
+template <typename T, typename... Args>
+T min(T a, Args... args)
+{
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
+   std::cout << __PRETTY_FUNCTION__ << "\n";
+#elif defined(_MSC_VER)
+   std::cout << __FUNCSIG__ << "\n";
+#endif
+   return min(a, min(args...));
+}
+int main()
+{
+   min(1, 5, 3, -4, 9);
+}
+The result of the execution of this program, when compiled with Clang, is the following:
+
+T min(T, Args...) [T = int, Args = <int, int, int, int>]
+
+T min(T, Args...) [T = int, Args = <int, int, int>]
+
+T min(T, Args...) [T = int, Args = <int, int>]
+
+T min(T, T) [T = int]
+
+T min(T, T) [T = int]
+
+T min(T, T) [T = int]
+
+T min(T, T) [T = int]
+
+On the other hand, when compiled with Visual C++, the output is the following:
+
+int __cdecl min<int,int,int,int,int>(int,int,int,int,int)
+
+int __cdecl min<int,int,int,int>(int,int,int,int)
+
+int __cdecl min<int,int,int>(int,int,int)
+
+int __cdecl min<int>(int,int)
+
+int __cdecl min<int>(int,int)
+
+int __cdecl min<int>(int,int)
+
+int __cdecl min<int>(int,int)
+
+Although the way the signature is formatted is significantly different between Clang/GCC on one hand and VC++ on the other hand, they all show the same: first, an overloaded function with five parameters is called, then one with four parameters, then one with three, and, in the end, there are four calls to the overload with two parameters (which marks the end of the expansion).
+
+Understanding the expansion of parameter packs is key to understanding variadic templates. Therefore, we'll explore this topic in detail in the next section.
+
+Parameter packs
+A template or function parameter pack can accept zero, one, or more arguments. The standard does not specify any upper limit for the number of arguments, but in practice, compilers may have some. What the standard does is recommend minimum values for these limits but it does not require any compliance on them. These limits are as follows:
+
+For a function parameter pack, the maximum number of arguments depends on the limit of arguments for a function call, which is recommended to be at least 256.
+For a template parameter pack, the maximum number of arguments depends on the limit of template parameters, which is recommended to be at least 1,024.
+The number of arguments in a parameter pack can be retrieved at compile time with the sizeof… operator. This operator returns a constexpr value of the std::size_t type. Let's see this at work in a couple of examples.
+
+In the first example, the sizeof… operator is used to implement the end of the recursion pattern of the variadic function template sum with the help of a constexpr if statement. If the number of the arguments in the parameter pack is zero (meaning there is a single argument to the function) then we are processing the last argument, so we just return the value. Otherwise, we add the first argument to the sum of the remaining ones. The implementation looks as follows:
+
+
+template <typename T, typename... Args>
+T sum(T a, Args... args)
+{
+   if constexpr (sizeof...(args) == 0)
+      return a;
+   else
+      return a + sum(args...);
+}
+This is semantically equivalent, but on the other hand more concise, than the following classical approach for the variadic function template implementation:
+
+
+template <typename T>
+T sum(T a)
+{
+   return a;
+}
+template <typename T, typename... Args>
+T sum(T a, Args... args)
+{
+   return a + sum(args...);
+}
+Notice that sizeof…(args) (the function parameter pack) and sizeof…(Args) (the template parameter pack) return the same value. On the other hand, sizeof…(args) and sizeof(args)... are not the same thing. The former is the sizeof operator used on the parameter pack args. The latter is an expansion of the parameter pack args on the sizeof operator. These are both shown in the following example:
+
+
+template<typename... Ts>
+constexpr auto get_type_sizes()
+{
+   return std::array<std::size_t, 
+                     sizeof...(Ts)>{sizeof(Ts)...};
+}
+auto sizes = get_type_sizes<short, int, long, long long>();
+In this snippet, sizeof…(Ts) evaluates to 4 at compile-time, while sizeof(Ts)... is expanded to the following comma-separated pack of arguments: sizeof(short), sizeof(int), sizeof(long), sizeof(long long). Conceptually, the preceding function template, get_type_sizes, is equivalent to the following function template with four template parameters:
+
+
+template<typename T1, typename T2, 
+         typename T3, typename T4>
+constexpr auto get_type_sizes()
+{
+   return std::array<std::size_t, 4> {
+      sizeof(T1), sizeof(T2), sizeof(T3), sizeof(T4)
+   };
+}
+Typically, the parameter pack is the trailing parameter of a function or template. However, if the compiler can deduce the arguments, then a parameter pack can be followed by other parameters including more parameter packs. Let's consider the following example:
+
+
+template <typename... Ts, typename... Us>
+constexpr auto multipacks(Ts... args1, Us... args2)
+{
+   std::cout << sizeof...(args1) << ','
+             << sizeof...(args2) << '\n';
+}
+This function is supposed to take two sets of elements of possibly different types and do something with them. It can be invoked such as in the following examples:
+
+
+multipacks<int>(1, 2, 3, 4, 5, 6);
+                 // 1,5
+multipacks<int, int, int>(1, 2, 3, 4, 5, 6);
+                // 3,3
+multipacks<int, int, int, int>(1, 2, 3, 4, 5, 6);
+               // 4,2
+multipacks<int, int, int, int, int, int>(1, 2, 3, 4, 5, 6); 
+               // 6,0
+For the first call, the args1 pack is specified at the function call (as in multipacks<int>) and contains 1, and args2 is deduced to be 2, 3, 4, 5, 6 from the function arguments. Similarly, for the second call, the two packs will have an equal number of arguments, more precisely 1, 2, 3 and 3, 4, 6. For the last call, the first pack contains all the elements, and the second pack is empty. In all these examples, all the elements are of the int type. However, in the following examples, the two packs contain elements of different types:
+
+
+multipacks<int, int>(1, 2, 4.0, 5.0, 6.0);         // 2,3
+multipacks<int, int, int>(1, 2, 3, 4.0, 5.0, 6.0); // 3,3
+For the first call, the args1 pack will contain the integers 1, 2 and the args2 pack will be deduced to contain the double values 4.0, 5.0, 6.0. Similarly, for the second call, the args1 pack will be 1, 2, 3 and the args2 pack will contain 4.0, 5.0, 6.0.
+
+However, if we change the function template multipacks a bit by requiring that the packs be of equal size, then only some of the calls shown earlier would still be possible. This is shown in the following example:
+
+
+template <typename... Ts, typename... Us>
+constexpr auto multipacks(Ts... args1, Us... args2)
+{
+   static_assert(
+      sizeof...(args1) == sizeof...(args2),
+      "Packs must be of equal sizes.");
+}
+multipacks<int>(1, 2, 3, 4, 5, 6);                   // error
+multipacks<int, int, int>(1, 2, 3, 4, 5, 6);         // OK
+multipacks<int, int, int, int>(1, 2, 3, 4, 5, 6);    // error
+multipacks<int, int, int, int, int, int>(1, 2, 3, 4, 5, 6); 
+                                                     // error
+multipacks<int, int>(1, 2, 4.0, 5.0, 6.0);           // error
+multipacks<int, int, int>(1, 2, 3, 4.0, 5.0, 6.0);   // OK
+In this snippet, only the second and the sixth calls are valid. In these two cases, the two deduced packs have three elements each. In all the other cases, as resulting from the prior example, the packs have different sizes and the static_assert statement will generate an error at compile-time.
+
+Multiple parameter packs are not specific to variadic function templates. They can also be used for variadic class templates in partial specialization, provided that the compiler can deduce the template arguments. To exemplify this, we'll consider the case of a class template that represents a pair of function pointers. The implementation should allow for storing pointers to any function. To implement this, we define a primary template, called here func_pair, and a partial specialization with four template parameters:
+
+A type template parameter for the return type of the first function
+A template parameter pack for the parameter types of the first function
+A second type template parameter for the return type of the second function
+A second template parameter pack for the parameter types of the second function
+The func_pair class template is shown in the next listing:
+
+
+template<typename, typename>
+struct func_pair;
+template<typename R1, typename... A1, 
+         typename R2, typename... A2>
+struct func_pair<R1(A1...), R2(A2...)>
+{
+   std::function<R1(A1...)> f;
+   std::function<R2(A2...)> g;
+};
+To demonstrate the use of this class template, let's also consider the following two functions:
+
+
+bool twice_as(int a, int b)
+{
+   return a >= b*2;
+}
+double sum_and_div(int a, int b, double c)
+{
+   return (a + b) / c;
+}
+We can instantiate the func_pair class template and use it to call these two functions as shown in the following snippet:
+
+
+func_pair<bool(int, int), double(int, int, double)> funcs{
+   twice_as, sum_and_div };
+funcs.f(42, 12);
+funcs.g(42, 12, 10.0);
+Parameter packs can be expanded in a variety of contexts and this will make the topic of the next section.
+
+Understanding parameter packs expansion
+Parameter packs can appear in a multitude of contexts. The form of their expansion may depend on this context. These possible contexts are listed ahead along with examples:
+
+Template parameter list: This is for when you specify parameters for a template:
+template <typename... T>
+
+struct outer
+
+{
+
+   template <T... args>
+
+   struct inner {};
+
+};
+
+outer<int, double, char[5]> a;
+
+Template argument list: This is when you specify arguments for a template:
+template <typename... T>
+
+struct tag {};
+
+template <typename T, typename U, typename ... Args>
+
+void tagger()
+
+{
+
+   tag<T, U, Args...> t1;
+
+   tag<T, Args..., U> t2;
+
+   tag<Args..., T, U> t3;
+
+   tag<U, T, Args...> t4;
+
+}
+
+Function parameter list: This is for when you specify parameters for a function template:
+template <typename... Args>
+
+void make_it(Args... args)
+
+{
+
+}
+
+make_it(42);
+
+make_it(42, 'a');
+
+Function argument list: When the expansion pack appears inside the parenthesis of a function call, the largest expression or brace initialization list to the left of the ellipsis is the pattern that is expanded:
+template <typename T>
+
+T step_it(T value)
+
+{
+
+   return value+1;
+
+}
+
+template <typename... T>
+
+int sum(T... args)
+
+{
+
+   return (... + args);
+
+}
+
+template <typename... T>
+
+void do_sums(T... args)
+
+{
+
+   auto s1 = sum(args...);
+
+   // sum(1, 2, 3, 4)
+
+   auto s2 = sum(42, args...);
+
+   // sum(42, 1, 2, 3, 4)
+
+   auto s3 = sum(step_it(args)...);
+
+   // sum(step_it(1), step_it(2),... step_it(4))
+
+}
+
+do_sums(1, 2, 3, 4);
+
+Parenthesized initializers: When the expansion pack appears inside the parenthesis of a direct initializer, function-style cast, member initializer, new expression, and other similar contexts, the rules are the same as for the context of function argument lists:
+template <typename... T>
+
+struct sum_wrapper
+
+{
+
+   sum_wrapper(T... args)
+
+   {
+
+      value = (... + args);
+
+   }
+
+   std::common_type_t<T...> value;
+
+};
+
+template <typename... T>
+
+void parenthesized(T... args)
+
+{
+
+   std::array<std::common_type_t<T...>,
+
+              sizeof...(T)> arr {args...};
+
+   // std::array<int, 4> {1, 2, 3, 4}
+
+   sum_wrapper sw1(args...);
+
+   // value = 1 + 2 + 3 + 4
+
+   sum_wrapper sw2(++args...);
+
+   // value = 2 + 3 + 4 + 5
+
+}
+
+parenthesized(1, 2, 3, 4);
+
+Brace-enclosed initializers: This is when you perform initialization using the brace notation:
+template <typename... T>
+
+void brace_enclosed(T... args)
+
+{
+
+   int arr1[sizeof...(args) + 1] = {args..., 0};     
+
+   // arr1: {1,2,3,4,0}
+
+   int arr2[sizeof...(args)] = { step_it(args)... };
+
+   // arr2: {2,3,4,5}
+
+}
+
+brace_enclosed(1, 2, 3, 4);
+
+Base specifiers and member initializer lists: A pack expansion may specify the list of base classes in a class declaration. In addition, it may also appear in the member initializer list, as this may be necessary to call the constructors of the base classes:
+struct A {};
+
+struct B {};
+
+struct C {};
+
+template<typename... Bases>
+
+struct X : public Bases...
+
+{
+
+   X(Bases const & ... args) : Bases(args)...
+
+   { }
+
+};
+
+A a;
+
+B b;
+
+C c;
+
+X x(a, b, c);
+
+Using declarations: In the context of deriving from a pack of base classes, it may also be useful to be able to introduce names from the base classes into the definition of the derived class. Therefore, a pack expansion may also appear in a using declaration. This is demonstrated based on the previous example:
+struct A
+
+{
+
+   void execute() { std::cout << "A::execute\n"; }
+
+};
+
+struct B
+
+{
+
+   void execute() { std::cout << "B::execute\n"; }
+
+};
+
+struct C
+
+{
+
+   void execute() { std::cout << "C::execute\n"; }
+
+};
+
+template<typename... Bases>
+
+struct X : public Bases...
+
+{
+
+   X(Bases const & ... args) : Bases(args)...
+
+   {}
+
+   using Bases::execute...;
+
+};
+
+A a;
+
+B b;
+
+C c;
+
+X x(a, b, c);
+
+x.A::execute();
+
+x.B::execute();
+
+x.C::execute();
+
+Lambda captures: The capture clause of a lambda expression may contain a pack expansion, as shown in the following example:
+template <typename... T>
+
+void captures(T... args)
+
+{
+
+   auto l = [args...]{
+
+               return sum(step_it(args)...); };
+
+   auto s = l();
+
+}
+
+captures(1, 2, 3, 4);
+
+Fold expressions: These will be discussed in detail in the following section in this chapter:
+template <typename... T>
+
+int sum(T... args)
+
+{
+
+   return (... + args);
+
+}
+
+The sizeof… operator: Examples have already been shown earlier in this section. Here is one again:
+template <typename... T>
+
+auto make_array(T... args)
+
+{
+
+   return std::array<std::common_type_t<T...>,
+
+                     sizeof...(T)> {args...};
+
+};
+
+auto arr = make_array(1, 2, 3, 4);
+
+Alignment specifier: A pack expansion in an alignment specifier has the same effect as having multiple alignas specifiers applied to the same declaration. The parameter pack can be either a type or non-type pack. Examples for both cases are listed here:
+template <typename... T>
+
+struct alignment1
+
+{
+
+   alignas(T...) char a;
+
+};
+
+template <int... args>
+
+struct alignment2
+
+{
+
+   alignas(args...) char a;
+
+};
+
+alignment1<int, double> al1;
+
+alignment2<1, 4, 8> al2;
+
+Attribute list: This is not supported by any compiler yet.
+Now that we have learned more about parameter packs and their expansion we can move forward and explore variadic class templates.
+
+Variadic class templates
+Class templates may also have a variable number of template arguments. This is key to building some categories of types, such as tuple and variant, that are available in the standard library. In this section, we will see how we could write a simple implementation for a tuple class. A tuple is a type that represents a fixed-size collection of heterogeneous values.
+
+When implementing variadic function templates we used a recursion pattern with two overloads, one for the general case and one for ending the recursion. The same approach has to be taken with variadic class templates, except that we need to use specialization for this purpose. Next, you can see a minimal implementation for a tuple:
+
+
+template <typename T, typename... Ts>
+struct tuple
+{
+   tuple(T const& t, Ts const &... ts)
+      : value(t), rest(ts...)
+   {
+   }
+   constexpr int size() const { return 1 + rest.size(); }
+   T            value;
+   tuple<Ts...> rest;
+};
+template <typename T>
+struct tuple<T>
+{
+   tuple(const T& t)
+      : value(t)
+   {
+   }
+   constexpr int size() const { return 1; }
+   T value;
+};
+The first class is the primary template. It has two template parameters: a type template and a parameter pack. This means, at the minimum, there must be one type specified for instantiating this template. The primary template tuple has two member variables: value, of the T type, and rest, of type tuple<Ts…>. This is an expansion of the rest of the template arguments. This means a tuple of N elements will contain the first element and another tuple; this second tuple, in turn, contains the second element and yet another tuple; this third nested tuple contains the rest. And this pattern continues until we end up with a tuple with a single element. This is defined by the partial specialization tuple<T>. Unlike the primary template, this specialization does not aggregate another tuple object.
+
+We can use this simple implementation to write code like the following:
+
+
+tuple<int> one(42);
+tuple<int, double> two(42, 42.0);
+tuple<int, double, char> three(42, 42.0, 'a');
+std::cout << one.value << '\n';
+std::cout << two.value << ',' 
+          << two.rest.value << '\n';
+std::cout << three.value << ',' 
+          << three.rest.value << ','
+          << three.rest.rest.value << '\n';
+Although this works, accessing elements through the rest member, such as in three.rest.rest.value, is very cumbersome. And the more elements a tuple has the more difficult it is to write code in this way. Therefore, we'd like to use some helper function to simplify accessing the elements of a tuple. The following is a snippet of how the previous could be transformed:
+
+
+std::cout << get<0>(one) << '\n';
+std::cout << get<0>(two) << ','
+          << get<1>(two) << '\n';
+std::cout << get<0>(three) << ','
+          << get<1>(three) << ','
+          << get<2>(three) << '\n';
+Here, get<N> is a variadic function template that takes a tuple as an argument and returns a reference to the element at the N index in the tuple. Its prototype could look like the following:
+
+
+template <size_t N, typename... Ts>
+typename nth_type<N, Ts...>::value_type & get(tuple<Ts...>& t);
+The template arguments are the index and a parameter pack of the tuple types. Its implementation, however, requires some helper types. First, we need to know what the type of the element is at the N index in the tuple. This can be retrieved with the help of the following nth_type variadic class template:
+
+
+template <size_t N, typename T, typename... Ts>
+struct nth_type : nth_type<N - 1, Ts...>
+{
+   static_assert(N < sizeof...(Ts) + 1,
+                 "index out of bounds");
+};
+template <typename T, typename... Ts>
+struct nth_type<0, T, Ts...>
+{
+   using value_type = T;
+};
+Again, we have a primary template that uses recursive inheritance, and the specialization for the index 0. The specialization defines an alias called value_type for the first type template (which is the head of the list of template arguments). This type is only used as a mechanism for determining the type of a tuple element. We need another variadic class template for retrieving the value. This is shown in the following listing:
+
+
+template <size_t N>
+struct getter
+{
+   template <typename... Ts>
+   static typename nth_type<N, Ts...>::value_type& 
+   get(tuple<Ts...>& t)
+   {
+      return getter<N - 1>::get(t.rest);
+   }
+};
+template <>
+struct getter<0>
+{
+   template <typename T, typename... Ts>
+   static T& get(tuple<T, Ts...>& t)
+   {
+      return t.value;
+   }
+};
+We can see here the same recursive pattern, with a primary template and an explicit specialization. The class template is called getter and has a single template parameter, which is a non-type template parameter. This represents the index of the tuple element we want to access. This class template has a static member function called get. This is a variadic function template. The implementation in the primary template calls the get function with the rest member of the tuple as an argument. On the other hand, the implementation of the explicit specialization returns the reference to the member value of the tuple.
+
+With all these defined, we can now provide an actual implementation for the helper variadic function template get. This implementation relies on the getter class template and calls its get variadic function template:
+
+
+template <size_t N, typename... Ts>
+typename nth_type<N, Ts...>::value_type & 
+get(tuple<Ts...>& t)
+{
+   return getter<N>::get(t);
+}
+If this example seems a little bit complicated, perhaps analyzing it step by step will help you better understand how it all works. Therefore, let's start with the following snippet:
+
+
+tuple<int, double, char> three(42, 42.0, 'a');
+get<2>(three);
+We will use the cppinsights.io web tools to check the template instantiations that occur from this snippet. The first to look at is the class template tuple. We have a primary template and several specializations, as follows:
+
+
+template <typename T, typename... Ts>
+struct tuple
+{
+   tuple(T const& t, Ts const &... ts)
+      : value(t), rest(ts...)
+   { }
+   constexpr int size() const { return 1 + rest.size(); }
+   T value;
+   tuple<Ts...> rest;
+};
+template<> struct tuple<int, double, char>
+{
+  inline tuple(const int & t, 
+               const double & __ts1, const char & __ts2)
+  : value{t}, rest{tuple<double, char>(__ts1, __ts2)}
+  {}
+  inline constexpr int size() const;
+  int value;
+  tuple<double, char> rest;
+};
+template<> struct tuple<double, char>
+{
+  inline tuple(const double & t, const char & __ts1)
+  : value{t}, rest{tuple<char>(__ts1)}
+  {}
+  inline constexpr int size() const;
+  double value;
+  tuple<char> rest;
+};
+template<> struct tuple<char>
+{
+  inline tuple(const char & t)
+  : value{t}
+  {}
+  inline constexpr int size() const;
+  char value;
+};
+template<typename T>
+struct tuple<T>
+{
+   inline tuple(const T & t) : value{t}
+   { }
+   inline constexpr int size() const
+   { return 1; }
+   T value;
+};
+The tuple<int, double, char> structure contains an int and a tuple<double, char>, which contains a double and a tuple<char>, which, in turn, contains a char value. This last class represents the end of the recursive definition of the tuple. This can be conceptually represented graphically as follows:
+
+Figure 3.1 – An example tuple
+Figure 3.1 – An example tuple
+
+Next, we have the nth_type class template, for which, again, we have a primary template and several specializations, as follows:
+
+
+template <size_t N, typename T, typename... Ts>
+struct nth_type : nth_type<N - 1, Ts...>
+{
+   static_assert(N < sizeof...(Ts) + 1,
+                 "index out of bounds");
+};
+template<>
+struct nth_type<2, int, double, char> : 
+   public nth_type<1, double, char>
+{ };
+template<>
+struct nth_type<1, double, char> : public nth_type<0, char>
+{ };
+template<>
+struct nth_type<0, char>
+{
+   using value_type = char;
+};
+template<typename T, typename ... Ts>
+struct nth_type<0, T, Ts...>
+{
+   using value_type = T;
+};
+The nth_type<2, int, double, char> specialization is derived from nth_type<1, double, char>, which in turn is derived from nth_type<0, char>, which is the last base class in the hierarchy (the end of the recursive hierarchy).
+
+The nth_type structure is used as the return type in the getter helper class template, which is instantiated as follows:
+
+
+template <size_t N>
+struct getter
+{
+   template <typename... Ts>
+   static typename nth_type<N, Ts...>::value_type& 
+   get(tuple<Ts...>& t)
+   {
+      return getter<N - 1>::get(t.rest);
+   }
+};
+template<>
+struct getter<2>
+{
+   template<>
+   static inline typename 
+   nth_type<2UL, int, double, char>::value_type & 
+   get<int, double, char>(tuple<int, double,  char> & t)
+   {
+      return getter<1>::get(t.rest);
+   } 
+};
+template<>
+struct getter<1>
+{
+   template<>
+   static inline typename nth_type<1UL, double,
+                                   char>::value_type &
+   get<double, char>(tuple<double, char> & t)
+   {
+      return getter<0>::get(t.rest);
+   }
+};
+template<>
+struct getter<0>
+{
+   template<typename T, typename ... Ts>
+   static inline T & get(tuple<T, Ts...> & t)
+   {
+      return t.value;
+   }
+   template<>
+   static inline char & get<char>(tuple<char> & t)
+   {
+      return t.value;
+   }
+};
+Lastly, the get function template that we use to retrieve the value of an element of a tuple is defined as follows:
+
+
+template <size_t N, typename... Ts>
+typename nth_type<N, Ts...>::value_type & 
+get(tuple<Ts...>& t)
+{
+   return getter<N>::get(t);
+}
+template<>
+typename nth_type<2UL, int, double, char>::value_type & 
+get<2, int, double, char>(tuple<int, double, char> & t)
+{
+  return getter<2>::get(t);
+}
+Should there be more calls to the get function more specializations of get would exist. For instance, for get<1>(three), the following specialization would be added:
+
+
+template<>
+typename nth_type<1UL, int, double, char>::value_type & 
+get<1, int, double, char>(tuple<int, double, char> & t)
+{
+  return getter<1>::get(t);
+}
+This example helped us demonstrate how to implement variadic class templates with a primary template for the general case and a specialization for the end case of the variadic recursion.
+
+You have probably noticed the use of the keyword typename to prefix the nth_type<N, Ts...>::value_type type, which is a dependent type. In C++20, this is no longer necessary. However, this topic will be addressed in detail in Chapter 4, Advanced Template Concepts.
+
+Because implementing variadic templates is often verbose and can be cumbersome, the C++17 standard added fold expressions to ease this task. We will explore this topic in the next section.
+
+Fold expressions
+A fold expression is an expression involving a parameter pack that folds (or reduces) the elements of the parameter pack over a binary operator. To understand how this works, we will look at several examples. Earlier in this chapter, we implemented a variable function template called sum that returned the sum of all its supplied arguments. For convenience, we will show it again here:
+
+
+template <typename T>
+T sum(T a)
+{
+   return a;
+}
+template <typename T, typename... Args>
+T sum(T a, Args... args)
+{
+   return a + sum(args...);
+}
+With fold expressions, this implementation that requires two overloads can be reduced to the following form:
+
+
+template <typename... T>
+int sum(T... args)
+{
+    return (... + args);
+}
+There is no need for overloaded functions anymore. The expression (... + args) represents the fold expression, which upon evaluation becomes ((((arg0 + arg1) + arg2) + … ) + argN). The enclosing parentheses are part of the fold expression. We can use this new implementation, just as we would use the initial one, as follows:
+
+
+int main()
+{
+    std::cout << sum(1) << '\n';
+    std::cout << sum(1,2) << '\n';
+    std::cout << sum(1,2,3,4,5) << '\n';
+}
+There are four different types of folds, which are listed as follows:
+
+Table 3.1
+Table 3.1
+
+In this table, the following names are used:
+
+pack is an expression that contains an unexpanded parameter pack, and arg1, arg2, argN-1, and argN are the arguments contained in this pack.
+op is one of the following binary operators: + - * / % ^ & | = < > << >> += -= *= /= %= ^= &= |= <<= >>= == != <= >= && || , .* ->*.
+init is an expression that does not contain an unexpanded parameter pack.
+In a unary fold, if the pack does not contain any elements, only some operators are allowed. These are listed in the following table, along with the value of the empty pack:
+
+Table 3.2
+Table 3.2
+
+Unary and binary folds differ in the use of an initialization value, that is present only for binary folds. Binary folds have the binary operator repeated twice (it must be the same operator). We can transform the variadic function template sum from using a unary right fold expression into one using a binary right fold by including an initialization value. Here is an example:
+
+
+template <typename... T>
+int sum_from_zero(T... args)
+{
+   return (0 + ... + args);
+}
+One could say there is no difference between the sum and sum_from_zero function templates. That is not actually true. Let's consider the following invocations:
+
+
+int s1 = sum();           // error
+int s2 = sum_from_zero(); // OK
+Calling sum without arguments will produce a compiler error, because unary fold expressions (over the operator + in this case) must have non-empty expansions. However, binary fold expressions do not have this problem, so calling sum_from_zero without arguments works and the function will return 0.
+
+In these two examples with sum and sum_from_zero, the parameter pack args appears directly within the fold expression. However, it can be part of an expression, as long as it is not expanded. This is shown in the following example:
+
+
+template <typename... T>
+void printl(T... args)
+{
+   (..., (std::cout << args)) << '\n';
+}
+template <typename... T>
+void printr(T... args)
+{
+   ((std::cout << args), ...) << '\n';
+}
+Here, the parameter pack args is part of the (std::cout << args) expression. This is not a fold expression. A fold expression is ((std::cout << args), ...). This is a unary left fold over the comma operator. The printl and printr functions can be used as in the following snippet:
+
+
+printl('d', 'o', 'g');  // dog
+printr('d', 'o', 'g');  // dog
+In both these cases, the text printed to the console is dog. This is because the unary left fold expands to (((std::cout << 'd'), std::cout << 'o'), << std::cout << 'g') and the unary right fold expands to (std::cout << 'd', (std::cout << 'o', (std::cout << 'g'))) and these two are evaluated in the same way. This is because a pair of expressions separated by a comma is evaluated left to right. This is true for the built-in comma operator. For types that overload the comma operator, the behavior depends on how the operator is overloaded. However, there are very few corner cases for overloading the comma operator (such as simplifying indexing multi-dimensional arrays). Libraries such as Boost.Assign and SOCI overload the comma operator, but, in general, this is an operator you should avoid overloading.
+
+Let's consider another example for using the parameter pack in an expression inside a fold expression. The following variadic function template inserts multiple values to the end of a std::vector:
+
+
+template<typename T, typename... Args>
+void push_back_many(std::vector<T>& v, Args&&... args)
+{
+   (v.push_back(args), ...);
+}
+push_back_many(v, 1, 2, 3, 4, 5); // v = {1, 2, 3, 4, 5}
+The parameter pack args is used with the v.push_back(args) expression that is folded over the comma operator. The unary left fold expression is (v.push_back(args), ...).
+
+Fold expressions have several benefits over the use of recursion to implement variadic templates. These benefits are as follows:
+
+Less and simpler code to write.
+Fewer template instantiations, which leads to faster compile times.
+Potentially faster code since multiple function calls are replaced with a single expression. However, this point may not be true in practice, at least not when optimizations are enabled. We have already seen that the compilers optimize code by removing these function calls.
+Now that we have seen how to create variadic function templates, variadic class templates, and how to use fold expressions, we are left to discuss the other kinds of templates that can be variadic: alias templates and variable templates. We will start with the former.
+
+Variadic alias templates
+Everything that can be templatized can also be made variadic. An alias template is an alias (another name) for a family of types. A variadic alias template is a name for a family of types with a variable number of template parameters. With the knowledge accumulated so far, it should be fairly trivial to write alias templates. Let's see an example:
+
+
+template <typename T, typename... Args>
+struct foo 
+{
+};
+template <typename... Args>
+using int_foo = foo<int, Args...>;
+The class template foo is variadic and takes at least one type template argument. int_foo, on the other hand, is only a different name for a family of types instantiated from the foo type with int as the first type template arguments. These could be used as follows:
+
+
+foo<double, char, int> f1;
+foo<int, char, double> f2;
+int_foo<char, double> f3;
+static_assert(std::is_same_v<decltype(f2), decltype(f3)>);
+In this snippet, f1 on one hand and f2 and f3 on the other are instances of different foo types, as they are instantiated from different sets of template arguments for foo. However, f2 and f3 are instances of the same type, foo<int, char, double>, since int_foo<char, double> is just an alias for this type.
+
+A similar example, although a bit more complex, is presented ahead. The standard library contains a class template called std::integer_sequence, which represents a compile-time sequence of integers, along with a bunch of alias templates to help create various kinds of such integer sequences. Although the code shown here is a simplified snippet, their implementation can, at least conceptually, be as follows:
+
+
+template<typename T, T... Ints>
+struct integer_sequence
+{};
+template<std::size_t... Ints>
+using index_sequence = integer_sequence<std::size_t,
+                                        Ints...>;
+template<typename T, std::size_t N, T... Is>
+struct make_integer_sequence : 
+  make_integer_sequence<T, N - 1, N - 1, Is...> 
+{};
+template<typename T, T... Is>
+struct make_integer_sequence<T, 0, Is...> : 
+  integer_sequence<T, Is...> 
+{};
+template<std::size_t N>
+using make_index_sequence = make_integer_sequence<std::size_t, 
+                                                  N>;
+template<typename... T>
+using index_sequence_for = 
+   make_index_sequence<sizeof...(T)>;
+There are three alias templates here:
+
+index_sequence, which creates an integer_sequence for the size_t type; this is a variadic alias template.
+index_sequence_for, which creates an integer_sequence from a parameter pack; this is also a variadic alias template.
+make_index_sequence, which creates an integer_sequence for the size_t type with the values 0, 1, 2, …, N-1. Unlike the previous ones, this is not an alias for a variadic template.
+The last subject to address in this chapter is variadic variable templates.
+
+Variadic variable templates
+As mentioned before, variable templates may also be variadic. However, variables cannot be defined recursively, nor can they be specialized like class templates. Fold expressions, which simplify generating expressions from a variable number of arguments, are very handy for creating variadic variable templates.
+
+In the following example, we define a variadic variable template called Sum that is initialized at compile-time with the sum of all integers supplied as non-type template arguments:
+
+
+template <int... R>
+constexpr int Sum = (... + R);
+int main()
+{
+    std::cout << Sum<1> << '\n';
+    std::cout << Sum<1,2> << '\n';
+    std::cout << Sum<1,2,3,4,5> << '\n';
+}
+This is similar to the sum function written with the help of fold expressions. However, in that case, the numbers to add were provided as function arguments. Here, they are provided as template arguments to the variable template. The difference is mostly syntactic; with optimizations enabled, the end result is likely the same in terms of generated assembly code, and therefore performance.
+
+Variadic variable templates follow the same patterns as all the other kinds of templates although they are not used as much as the others. However, by concluding this topic we have now completed the learning of variadic templates in C++.
+
+Summary
+In this chapter, we have explored an important category of templates, variadic templates, which are templates with a variable number of template arguments. We can create variadic function templates, class templates, variable templates, and alias templates. The techniques to create variadic function templates and variadic class templates are different but incur a form of compile-time recursion. For the latter, this is done with template specialization, while for the former with function overloads. Fold expressions help to expand a variable number of arguments into a single expression, avoiding the need of using function overloads and enabling the creation of some categories of variadic variable templates such as the ones we have previously seen.
+
+In the next chapter, we will look into a series of more advanced features that will help you consolidate your knowledge of templates.
+
+Questions
+What are variadic templates and why are they useful?
+What is a parameter pack?
+What are the contexts where parameter packs can be expanded?
+What are fold expressions?
+What are the benefits of using fold expressions?
+Further reading
+C++ Fold Expressions 101, Jonathan Boccara, https://www.fluentcpp.com/2021/03/12/cpp-fold-expressions/
+Fold Expressions in C++ 17, Vaibhav, https://mainfunda.com/fold-expressions-in-cpp17/
+Nifty Fold Expression Tricks, Jonathan Müller, https://www.foonathan.net/2020/05/fold-tricks/
+
+table of contents
+search
+Settings
+Chapter 2: Template Fundamentals
+Chapter 3: Variadic Templates
+Add to playlist
+
+Template Metaprogramming with C++
+Part 2: Advanced Template Features
